@@ -1,0 +1,88 @@
+#!/bin/bash
+#PBS -N matmul_bench_paralela
+#PBS -q paralela
+#PBS -l nodes=2:ppn=128
+#PBS -l walltime=04:00:00
+#PBS -j oe
+#PBS -o benchmark_results_paralela2.log
+
+cd $PBS_O_WORKDIR
+
+source ~/spack/share/spack/setup-env.sh
+spack env activate cenapad_challenge2
+
+EXEC="./build/matmul_bench"
+OUT_CSV="benchmark_results_paralela2.csv"
+
+echo "Tag,Mode,N,BlockSize,MPI_Procs,OpenBLAS_Threads,Rep,Time_s,GFLOPS,Validation,MaxAbsErr,MaxRelErr,FrobRelErr,ValTime_s" > $OUT_CSV
+
+REPS=3
+
+# ==============================================================================
+# 1. VALIDAÇÃO DE CORRETUDE (Compara saída com referência serial)
+# ==============================================================================
+echo "=== Executando Validação de Corretude ==="
+mpirun -np 4 $EXEC -n 2000 -b 128 -m all -t 1 -r 1 -v | grep "^CSV" >> $OUT_CSV
+
+# ==============================================================================
+# 2. LINHA DE BASE SERIAL (1 Processo)
+# ==============================================================================
+echo "=== Executando Linha de Base Serial ==="
+for N in 2000 4000 6000; do
+    mpirun -np 1 $EXEC -n $N -b 256 -m serial -t 1 -r $REPS | grep "^CSV" >> $OUT_CSV
+done
+
+# ==============================================================================
+# 3. ESCALABILIDADE FORTE EM 2 NÓS (256 CORES TOTAIS)
+# ==============================================================================
+echo "=== Executando Escalabilidade Forte ==="
+SIZES=(2000 4000 6000)
+BLOCKS=(64 128 256)
+PROCS=(16 32 64 128 256)
+
+for N in "${SIZES[@]}"; do
+    for BS in "${BLOCKS[@]}"; do
+        for NP in "${PROCS[@]}"; do
+            # MPI Puro (1 thread por processo)
+            export OPENBLAS_NUM_THREADS=1
+            mpirun -np $NP $EXEC -n $N -b $BS -m mpi -t 1 -r $REPS | grep "^CSV" >> $OUT_CSV
+
+            # MPI + OpenBLAS (MPI Puro sobre BLAS)
+            mpirun -np $NP $EXEC -n $N -b $BS -m blas -t 1 -r $REPS | grep "^CSV" >> $OUT_CSV
+        done
+    done
+done
+
+# ==============================================================================
+# 4. EXPERIMENTO HÍBRIDO (Processos MPI vs Threads OpenBLAS)
+# ==============================================================================
+echo "=== Executando Estudo Híbrido ==="
+N=4000
+BS=256
+# Testa combinações que ocupam os 256 cores alocados (Processos x Threads = 256)
+HYBRID_CONFIGS=("256:1" "128:2" "64:4" "32:8")
+
+for cfg in "${HYBRID_CONFIGS[@]}"; do
+    NP="${cfg%%:*}"
+    TH="${cfg##*:}"
+    export OPENBLAS_NUM_THREADS=$TH
+    mpirun -np $NP $EXEC -n $N -b $BS -m blas -t $TH -r $REPS | grep "^CSV" >> $OUT_CSV
+done
+
+# ==============================================================================
+# 5. ESCALABILIDADE FRACA (Trabalho constante por processo)
+# ==============================================================================
+echo "=== Executando Escalabilidade Fraca ==="
+BS=256
+WEAK_PAIRS=("32:2000" "64:2520" "128:3175" "256:4000")
+
+for pair in "${WEAK_PAIRS[@]}"; do
+    NP="${pair%%:*}"
+    N_WEAK="${pair##*:}"
+
+    export OPENBLAS_NUM_THREADS=1
+    mpirun -np $NP $EXEC -n $N_WEAK -b $BS -m mpi -t 1 -r $REPS | grep "^CSV" >> $OUT_CSV
+    mpirun -np $NP $EXEC -n $N_WEAK -b $BS -m blas -t 1 -r $REPS | grep "^CSV" >> $OUT_CSV
+done
+
+echo "Todos os experimentos foram concluídos com sucesso!"

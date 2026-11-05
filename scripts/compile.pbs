@@ -1,0 +1,21 @@
+#!/bin/bash
+#PBS -N compile_matmul
+#PBS -l select=1:ncpus=2:mpiprocs=2
+#PBS -l walltime=00:10:00
+#PBS -j oe
+#PBS -o compile.log
+#PBS -q testes
+
+cd $PBS_O_WORKDIR
+
+# Carrega e ativa o ambiente Spack
+source ~/spack/share/spack/setup-env.sh
+spack env activate cenapad_challenge2
+
+rm -rf build
+mkdir -p build && cd build
+
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j 4 || exit 1
+
+echo "Compilação concluída com sucesso!"

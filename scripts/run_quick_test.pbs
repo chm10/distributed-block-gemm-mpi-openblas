@@ -1,0 +1,25 @@
+#!/bin/bash
+#PBS -N matmul_sanity_test
+#PBS -q testes
+#PBS -l select=1:ncpus=4:mpiprocs=4
+#PBS -l walltime=00:15:00
+#PBS -j oe
+#PBS -o sanity_test.log
+
+cd $PBS_O_WORKDIR
+
+source ~/spack/share/spack/setup-env.sh
+spack env activate cenapad_challenge2
+
+EXEC="./build/matmul_bench"
+
+echo "=== TESTE DE SANIDADE (Fila: testes | 4 cores) ==="
+
+# 1. Testar todos os modos (serial, mpi, blas) com validação (-v) para N=1000
+mpirun -np 4 $EXEC -n 1000 -b 128 -m all -t 1 -r 1 -v
+
+# 2. Testar o modo híbrido MPI + OpenBLAS (2 processos x 2 threads = 4 cores)
+export OPENBLAS_NUM_THREADS=2
+mpirun -np 2 $EXEC -n 2000 -b 128 -m blas -t 2 -r 1 -v
+
+echo "=== FIM DO TESTE DE SANIDADE ==="
